@@ -1,0 +1,357 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources: 
+# Create the VPC ------------------------------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: "Name"
+          Value: "VPC"
+
+# Creates public and private subnet in one AZ -------------------------------------------
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC
+    Properties:
+      AvailabilityZone: "us-east-1a"
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: "Name"
+          Value: "Public Subnet"
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC
+    Properties:
+      AvailabilityZone: "us-east-1a"
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      Tags:
+        - Key: "Name"
+          Value: "Private Subnet"
+
+# Creates public and private subnet in the second AZ ------------------------------------
+  SecondPublicSubnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC
+    Properties:
+      AvailabilityZone: "us-east-1b"
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      Tags:
+        - Key: "Name"
+          Value: "Second Public Subnet"
+
+  SecondPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC
+    Properties:
+      AvailabilityZone: "us-east-1b"
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      Tags:
+        - Key: "Name"
+          Value: "Second Private Subnet"
+
+# Create and attach internet gateway to VPC ---------------------------------------------
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: "Name"
+          Value: "Internet Gateway"
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    DependsOn: IGW
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref IGW
+
+
+# Get a Public IP, create a NAT Gateway associated with it in both Public Subnets -------
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+
+  SecondNatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  SecondNatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt SecondNatEIP.AllocationId
+      SubnetId: !Ref SecondPublicSubnet
+
+# Security Group for Bastion Host -------------------------------------------------------
+  BastionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: Bastion-SG
+      GroupDescription: Allow SSH only, meant to be used with Bastion hosts
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: "Name"
+          Value: "Bastion-SG"
+
+# Launch Bastion Host in the public subnet with a public IP -----------------------------
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0d7a109bf30624c99
+      InstanceType: t2.micro
+      KeyName: bastion
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref BastionSG
+      Tags:
+        - Key: "Name"
+          Value: "Bastion Host"
+
+  BastionEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref BastionHost
+
+# Security Group for Web Servers --------------------------------------------------------
+  WebServerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: WebServer-SG
+      GroupDescription: Allow SSH from Bastion only.
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !GetAtt BastionSG.GroupId 
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: "Name"
+          Value: "WebServer-SG"
+
+# Further add a new role to the Web Server SG to be reachabla by the Load Balancer ------
+# It has to be created later because it depands on the LoadBalancerSG -------------------
+  WebServerSGRuleHTTPLoadBalancerSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: LoadBalancerSG
+    Properties:
+      GroupId: !GetAtt WebServerSG.GroupId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !GetAtt LoadBalancerSG.GroupId
+
+# Launches an instance with Nginx in the Private Subnet ---------------------------------
+  WebServer:
+    DependsOn: PrivateRouteTableAssociation
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0d7a109bf30624c99
+      InstanceType: t2.micro
+      KeyName: marco
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+      - !Ref WebServerSG
+      Tags:
+        - Key: "Name"
+          Value: "WebServer"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -ex
+          yum update -y
+          yum install nginx -y
+          sudo systemctl enable --now nginx
+
+  SecondWebServer:
+    DependsOn: PrivateRouteTableAssociation
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0d7a109bf30624c99
+      InstanceType: t2.micro
+      KeyName: marco
+      SubnetId: !Ref SecondPrivateSubnet
+      SecurityGroupIds:
+      - !Ref WebServerSG
+      Tags:
+        - Key: "Name"
+          Value: "SecondWebServer"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -ex
+          yum update -y
+          yum install nginx -y
+          sudo systemctl enable --now nginx
+    
+# Creates a target group for the load balancer with both instances ----------------------
+  WebServerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn:
+      - WebServer
+      - SecondWebServer
+    Properties:
+      Name: web-server-tg
+      Protocol: HTTP
+      Port: 80
+      VpcId: !Ref VPC
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: "200-399"
+      Targets:
+        - Id: !Ref WebServer
+          Port: 80
+        - Id: !Ref SecondWebServer
+          Port: 80
+
+# Load Balancer Security Group ----------------------------------------------------------
+  LoadBalancerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: LoadBalancer-SG
+      GroupDescription: Allow traffic on port 80
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          DestinationSecurityGroupId: !Ref WebServerSG
+      Tags:
+        - Key: "Name"
+          Value: "LoadBalancer-SG"
+
+# Application Load Balancer -------------------------------------------------------------
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn:
+      - PublicSubnet
+      - SecondPublicSubnet
+    Properties:
+      Name: webserver-load-balancer
+      SecurityGroups:
+        - !Ref LoadBalancerSG
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet
+        - !Ref SecondPublicSubnet
+
+# Load Balancer Listener for HTTP (80) --------------------------------------------------
+  LoadBalancerListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn:
+      - WebServerTargetGroup
+      - LoadBalancer
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebServerTargetGroup
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+
+# Creates a public accessible S3 Bucket for a static web server -------------------------
+# still needs to make files individually public -----------------------------------------
+# Ownership explanation in this post:
+# https://stackoverflow.com/questions/76097031/aws-s3-bucket-cannot-have-acls-set-with-objectownerships-bucketownerenforced-s
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'marco-amazing-bucket-static-web'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: ObjectWriter
+      WebsiteConfiguration:
+        IndexDocument: 'index.html'
+
+# Crate Route Tables --------------------------------------------------------------------
+# Public
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: "Name"
+          Value: "Public Route Table"
+
+  PublicRouteIGW:
+    Type: AWS::EC2::Route
+    DependsOn: PublicRouteTable
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+
+  PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  SecondPublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SecondPublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+# Private
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: "Name"
+          Value: "Private Route Table"
+
+  PrivateRouteNGW:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref NatGateway
+
+  PrivateRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  SecondPrivateRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SecondPrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
