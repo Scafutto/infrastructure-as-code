@@ -17,7 +17,7 @@ This is a simple AWS deployment that consists of the following resources:
 
 ## Important Note
 
-I couldn't figure out why attaching the NAT Gateway is never marked as complete, so when launching the stack make you **Preserve** the resources in case of failure. Although this is not marked as complete by Cloud Formation, it is being normally deployed. 
+I couldn't figure out why attaching the NAT Gateway is never marked as complete, so when launching the stack make sure you **Preserve** the resources in case of failure. Although this is not marked as complete by Cloud Formation, it is being normally deployed. 
 
 ## To be done
 - Fix the problem with the incomplete NAT Gateway attachment 
