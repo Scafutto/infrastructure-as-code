@@ -15,12 +15,24 @@ This is a simple AWS deployment that consists of the following resources:
 - 1 Bastion Host EC2 instance (Public Subnet)
 - A few ACLs, Security Groups, and routes.
 
-## Important Note
+### Bucket
 
-I couldn't figure out why attaching the NAT Gateway is never marked as complete, so when launching the stack make sure you **Preserve** the resources in case of failure. Although this is not marked as complete by Cloud Formation, it is being normally deployed. 
+Deploys a bucket for static web hosting, you will still need to upload the html file.
+More information can be found [here](https://docs.aws.amazon.com/AmazonS3/latest/userguide/WebsiteHosting.html). 
 
-## To be done
-- Fix the problem with the incomplete NAT Gateway attachment 
-- This deployment would benefit from additional security, identity, and compliance resources. Additionally, splitting the stack into different files, such as one for EC2 instances and another for network resources, would be recommended. This could be achieved by using "Exports," but the intent of this project is to keep it all in one file for simplicity.
+### Netork
 
+Deploys a VPC with subnets (private/public) across 2 different availability zones, ensuring high availability to our web servers.
+More information can be found [here](https://docs.aws.amazon.com/whitepapers/latest/real-time-communication-on-aws/use-multiple-availability-zones.html).
 
+### Instances
+
+Deploys a Bastion host to allow users to ssh into the webservers. Bastion host is located in one of the public subnets, and can access services on both AZs.
+More information about bastion hosts [here](https://www.knowledgehut.com/tutorials/aws/aws-bastion-host).
+
+Also deploys 2 web servers, one in each Private subnet. 
+
+### Loadbalancer
+
+Sets a target group (to both web-servers), and a listener on port 80. The loadbalancer spans across both AZs. This is good practice to distribute traffic across different instances, but also to ensure the service will continue to work if one instance fails.
+More infor on load balancers [here](https://aws.amazon.com/elasticloadbalancing/).

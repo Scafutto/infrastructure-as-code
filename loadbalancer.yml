@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Resources:
+  WebServerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: web-server-tg
+      Protocol: HTTP
+      Port: 80
+      VpcId: !ImportValue "VpcId"
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: "200-399"
+      Targets:
+        - Id: !ImportValue "WebServer1InstanceId"
+          Port: 80
+        - Id: !ImportValue "WebServer2InstanceId"
+          Port: 80
+
+  LoadBalancerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: LoadBalancer-SG
+      GroupDescription: Allow traffic on port 80
+      VpcId: !ImportValue "VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          DestinationSecurityGroupId: !ImportValue WebServerSecurityGroupId
+      Tags:
+        - Key: "Name"
+          Value: "LoadBalancer-SG"
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: webserver-load-balancer
+      SecurityGroups:
+        - !Ref LoadBalancerSG
+      Scheme: internet-facing
+      Subnets:
+        - !ImportValue "PublicSubnet1Id"
+        - !ImportValue "PublicSubnet2Id"
+
+  LoadBalancerListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebServerTargetGroup
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  WebSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue WebServerSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref LoadBalancerSG

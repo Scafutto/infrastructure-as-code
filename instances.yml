@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Creates a bastion instance in the first public subnet"
+Parameters:
+  BastionKey:
+    Description: "Name of an existing EC2 KeyPair to enable SSH access to the instance"
+    Type: "AWS::EC2::KeyPair::KeyName"
+    ConstraintDescription: "bastion"
+
+  WebKey:
+    Description: "Name of an existing EC2 KeyPair to enable SSH access to the instance"
+    Type: "AWS::EC2::KeyPair::KeyName"
+    ConstraintDescription: "marco"
+
+Resources:
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: Bastion-SG
+      GroupDescription: Allow SSH only, meant to be used with Bastion hosts
+      VpcId: !ImportValue "VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: "Name"
+          Value: "Bastion-SG"
+
+  BastionInstance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      KeyName: !Ref BastionKey
+      ImageId: "ami-0d7a109bf30624c99"
+      SubnetId: !ImportValue "PublicSubnet1Id"
+      Tags:
+        - Key: "Name"
+          Value: "bastion-instance"
+
+  BastionEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref BastionInstance
+
+# ----------
+
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: WebServer-SG
+      GroupDescription: Allow SSH from the bastion security group and all egress traffic
+      VpcId: !ImportValue "VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !GetAtt BastionSecurityGroup.GroupId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  WebServer1:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      KeyName: !Ref WebKey
+      ImageId: "ami-0d7a109bf30624c99"
+      SubnetId: !ImportValue "PrivateSubnet1Id"
+      Tags:
+        - Key: "Name"
+          Value: "web-server-1"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -ex
+          yum update -y
+          yum install nginx -y
+          sudo systemctl enable --now nginx
+
+  WebServer2:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      KeyName: !Ref WebKey
+      ImageId: "ami-0d7a109bf30624c99"
+      SubnetId: !ImportValue "PrivateSubnet2Id"
+      Tags:
+        - Key: "Name"
+          Value: "web-server-2"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -ex
+          yum update -y
+          yum install nginx -y
+          sudo systemctl enable --now nginx
+
+
+Outputs:
+  BastionInstancePublicIP:
+    Description: "Public IP address of the bastion instance"
+    Value: !GetAtt BastionInstance.PublicIp
+
+  WebServer1InstanceId:
+    Description: "ID of the first web server instance"
+    Value: !Ref WebServer1
+    Export:
+      Name: !Sub "WebServer1InstanceId"
+
+  WebServer2InstanceId:
+    Description: "ID of the second web server instance"
+    Value: !Ref WebServer2
+    Export:
+      Name: !Sub "WebServer2InstanceId"
+
+  WebServerSecurityGroupId:
+    Description: "ID of the web server security group"
+    Value: !Ref WebServerSecurityGroup
+    Export:
+      Name: !Sub "WebServerSecurityGroupId"
